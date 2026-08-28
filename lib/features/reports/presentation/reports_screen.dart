@@ -5,6 +5,9 @@ import 'package:my_accounts/features/transactions/data/transaction_repository.da
 import 'package:intl/intl.dart';
 import 'package:my_accounts/core/theme/app_theme.dart';
 import 'package:my_accounts/core/utils/pdf_service.dart';
+import 'package:my_accounts/core/database/database_provider.dart';
+import 'package:drift/drift.dart' show TypedResult;
+import 'package:my_accounts/core/database/app_database.dart';
 
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
@@ -20,8 +23,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final repository = ref.watch(transactionRepositoryProvider);
+    final db = ref.watch(databaseProvider);
 
-    final summaryStream = repository.getBalancePerCurrency(
+    // جلب كافة العمليات التفصيلية لضمان فصلها حسب العملة بدقة عند التصدير
+    final transactionsStream = repository.watchAllTransactions(
       startDate: _selectedDateRange?.start,
       endDate: _selectedDateRange?.end,
     );
@@ -51,20 +56,23 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             ),
         ],
       ),
-      body: StreamBuilder<List<TransactionSummary>>(
-        stream: summaryStream,
+      body: StreamBuilder<List<TypedResult>>(
+        stream: transactionsStream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          final summaries = snapshot.data ?? [];
-          if (summaries.isEmpty) {
+          
+          final allTransactions = snapshot.data ?? [];
+          if (allTransactions.isEmpty) {
             return Center(child: Text(l10n.noTransactions));
           }
 
-          final Map<String, List<TransactionSummary>> grouped = {};
-          for (var s in summaries) {
-            grouped.putIfAbsent(s.currencyCode, () => []).add(s);
+          // تجميع العمليات حسب العملة (Currency Code) لمنع الاختلاط في التقارير
+          final Map<String, List<TypedResult>> groupedByCurrency = {};
+          for (var row in allTransactions) {
+            final currency = row.readTable(db.currencies);
+            groupedByCurrency.putIfAbsent(currency.code, () => []).add(row);
           }
 
           return ListView(
@@ -81,62 +89,14 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                     ),
                   ),
                 ),
-              ...grouped.entries.map((entry) => _buildCurrencyReport(context, entry.key, entry.value, l10n)),
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: () async {
-                  double totalIncome = 0;
-                  double totalExpense = 0;
-
-                  for (final item in summaries) {
-                    if (item.type == 'income') {
-                      totalIncome += item.total;
-                    } else if (item.type == 'expense') {
-                      totalExpense += item.total;
-                    }
-                  }
-
-                  final transactionsData = summaries.map((item) {
-                    return <String, dynamic>{
-                      'date': _selectedDateRange != null
-                          ? '${DateFormat('yyyy-MM-dd').format(_selectedDateRange!.start)} - '
-                          '${DateFormat('yyyy-MM-dd').format(_selectedDateRange!.end)}'
-                          : 'كل الفترات',
-                      'type': item.type == 'income' ? 'مقبوضات' : 'مدفوعات',
-                      'reason': 'إجمالي العمليات',
-                      'project': '-',
-                      'amount':
-                      '${NumberFormat.decimalPattern().format(item.total)} ${item.currencyCode}',
-                    };
-                  }).toList();
-
-                  final currency = summaries.isNotEmpty
-                      ? summaries.first.currencyCode
-                      : 'SYP';
-
-                  final period = _selectedDateRange != null
-                      ? '${DateFormat('yyyy-MM-dd').format(_selectedDateRange!.start)}'
-                      ' - '
-                      '${DateFormat('yyyy-MM-dd').format(_selectedDateRange!.end)}'
-                      : 'كل الفترات';
-
-                  await PdfService.generateFullReport(
-                    companyName: 'حساباتي',
-                    period: period,
-                    currency: currency,
-                    totalIncome: totalIncome,
-                    totalExpense: totalExpense,
-                    transactionsData: transactionsData,
-                  );
-                },
-                icon: const Icon(Icons.picture_as_pdf),
-                label: Text(l10n.exportPdf),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: AppTheme.primaryBlue,
-                  foregroundColor: Colors.white,
-                ),
-              ),
+              // عرض بطاقة منفصلة لكل عملة مع زر تصدير خاص بها فقط
+              ...groupedByCurrency.entries.map((entry) => _buildCurrencyCard(
+                    context,
+                    entry.key,
+                    entry.value,
+                    l10n,
+                    db,
+                  )),
             ],
           );
         },
@@ -144,22 +104,53 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     );
   }
 
-  Widget _buildCurrencyReport(BuildContext context, String currencyCode, List<TransactionSummary> items, AppLocalizations l10n) {
-    double income = 0;
-    double expense = 0;
+  Widget _buildCurrencyCard(
+    BuildContext context,
+    String currencyCode,
+    List<TypedResult> transactions,
+    AppLocalizations l10n,
+    AppDatabase db,
+  ) {
+    double totalIncome = 0;
+    double totalExpense = 0;
     String symbol = '';
 
-    for (var item in items) {
-      symbol = item.currencySymbol;
-      if (item.type == 'income') income += item.total;
-      if (item.type == 'expense') expense += item.total;
+    // معالجة وتصفية بيانات العملة المحددة فقط وتجهيزها للتصدير
+    final List<Map<String, dynamic>> transactionsData = [];
+    
+    for (var row in transactions) {
+      final tx = row.readTable(db.transactions);
+      final curr = row.readTable(db.currencies);
+      final proj = row.readTableOrNull(db.projects);
+      final cat = row.readTableOrNull(db.categories);
+      final person = row.readTableOrNull(db.people);
+
+      symbol = curr.symbol;
+      if (tx.type == 'income') {
+        totalIncome += tx.amount;
+      } else if (tx.type == 'expense') {
+        totalExpense += tx.amount;
+      }
+
+      transactionsData.add({
+        'date': DateFormat('yyyy-MM-dd').format(tx.transactionDate),
+        'type': tx.type == 'income' ? 'قبض' : 'صرف',
+        'project': proj?.name ?? '-',
+        'category': cat?.name ?? '-',
+        'reason': tx.reason,
+        'person': person?.name ?? '-',
+        'amount': '${NumberFormat.decimalPattern().format(tx.amount)} $currencyCode',
+        'notes': tx.notes ?? '-',
+      });
     }
 
-    final net = income - expense;
+    final net = totalIncome - totalExpense;
     final numberFormat = NumberFormat.decimalPattern();
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 20),
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -168,19 +159,50 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(currencyCode, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                Text(symbol, style: const TextStyle(fontSize: 20, color: Colors.grey)),
+                Text(currencyCode,
+                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                Text(symbol,
+                    style: const TextStyle(fontSize: 22, color: Colors.blueGrey)),
               ],
             ),
             const Divider(),
-            _buildReportRow(l10n.income, numberFormat.format(income), AppTheme.incomeGreen),
-            _buildReportRow(l10n.expenses, numberFormat.format(expense), AppTheme.expenseRed),
+            _buildStatRow(l10n.income, numberFormat.format(totalIncome), AppTheme.incomeGreen),
+            _buildStatRow(l10n.expenses, numberFormat.format(totalExpense), AppTheme.expenseRed),
             const Divider(),
-            _buildReportRow(
+            _buildStatRow(
               l10n.netBalance,
               numberFormat.format(net),
               net >= 0 ? AppTheme.incomeGreen : AppTheme.expenseRed,
               isBold: true,
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  final period = _selectedDateRange != null
+                      ? '${DateFormat('yyyy-MM-dd').format(_selectedDateRange!.start)} - ${DateFormat('yyyy-MM-dd').format(_selectedDateRange!.end)}'
+                      : 'كل الفترات';
+
+                  // تصدير بيانات هذه العملة فقط بشكل مستقل
+                  await PdfService.generateFullReport(
+                    companyName: 'حساباتي',
+                    period: period,
+                    currency: currencyCode,
+                    totalIncome: totalIncome,
+                    totalExpense: totalExpense,
+                    transactionsData: transactionsData,
+                  );
+                },
+                icon: const Icon(Icons.picture_as_pdf),
+                label: Text('${l10n.exportPdf} ($currencyCode)'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryBlue,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
             ),
           ],
         ),
@@ -188,25 +210,21 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     );
   }
 
-  Widget _buildReportRow(String label, String value, Color color, {bool isBold = false}) {
+  Widget _buildStatRow(String label, String value, Color color, {bool isBold = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontSize: 16, fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
+          Text(value,
+              style: TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.bold, color: color)),
         ],
       ),
     );
   }
 }
-
-

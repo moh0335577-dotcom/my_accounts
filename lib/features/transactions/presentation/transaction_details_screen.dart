@@ -46,13 +46,22 @@ class TransactionDetailsScreen extends ConsumerWidget {
               final currency = row.readTable(db.currencies);
               final project = row.readTableOrNull(db.projects);
               final person = row.readTableOrNull(db.people);
+              final category = row.readTableOrNull(db.categories);
 
               return Row(
                 children: [
                   IconButton(
                     icon: const Icon(Icons.picture_as_pdf_outlined),
                     tooltip: l10n.exportPdf,
-                    onPressed: () => PdfService.exportSingleTransaction(tx, currency, project),
+                    onPressed: () async {
+                      await PdfService.exportSingleTransaction(
+                        tx: tx,
+                        curr: currency,
+                        proj: project,
+                        cat: category,
+                        person: person,
+                      );
+                    },
                   ),
                   IconButton(
                     icon: const Icon(Icons.share_outlined),
@@ -286,5 +295,3 @@ class TransactionDetailsScreen extends ConsumerWidget {
     }
   }
 }
-
-
