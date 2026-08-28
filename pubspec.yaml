@@ -1,0 +1,62 @@
+name: my_accounts
+description: Professional Personal and Project Financial Management App.
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  
+  # State Management
+  flutter_riverpod: ^2.4.9
+  riverpod_annotation: ^2.3.3
+
+  # Database
+  drift: ^2.14.1
+  sqlite3_flutter_libs: ^0.5.18
+  path_provider: ^2.1.1
+  path: ^1.8.3
+
+  # Persistence
+  shared_preferences: ^2.2.2
+
+  # UI & Components
+  go_router: ^12.1.1
+  intl: ^0.20.2
+  fl_chart: ^0.66.0
+  font_awesome_flutter: ^10.6.0
+  flutter_slidable: ^3.0.1
+  google_fonts: ^6.1.0
+  uuid: ^4.2.2
+  share_plus: ^7.2.2
+
+  # Security & Files
+  local_auth: ^2.1.6
+  file_picker: ^8.3.7
+  open_file: ^3.5.11
+  permission_handler: ^11.3.0
+
+  # PDF & Reporting
+  pdf: ^3.10.7
+  printing: ^5.11.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  # Code Generation
+  drift_dev: ^2.14.1
+  build_runner: ^2.4.7
+  riverpod_generator: ^2.3.9
+
+flutter:
+  uses-material-design: true
+  generate: true
+  
+  assets:
+    - assets/images/
+    - assets/fonts/
