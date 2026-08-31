@@ -6,7 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:my_accounts/core/database/app_database.dart';
 import 'package:my_accounts/core/database/database_provider.dart';
 import 'package:my_accounts/core/theme/app_theme.dart';
-import 'package:my_accounts/features/transactions/data/transaction_repository.dart';
+import 'package:my_accounts/core/utils/pdf_service.dart';
 import 'package:drift/drift.dart' as drift;
 
 class PersonDetailsScreen extends ConsumerWidget {
@@ -21,10 +21,13 @@ class PersonDetailsScreen extends ConsumerWidget {
     
     final personStream = (db.select(db.people)..where((t) => t.id.equals(personId))).watchSingleOrNull();
     
-    // Custom logic to get balances for this person
     final transactionsStream = db.select(db.transactions).join([
       drift.innerJoin(db.currencies, db.currencies.id.equalsExp(db.transactions.currencyId)),
-    ])..where(db.transactions.personId.equals(personId) & db.transactions.deletedAt.isNull());
+      drift.leftOuterJoin(db.projects, db.projects.id.equalsExp(db.transactions.projectId)),
+      drift.leftOuterJoin(db.categories, db.categories.id.equalsExp(db.transactions.categoryId)),
+      drift.leftOuterJoin(db.people, db.people.id.equalsExp(db.transactions.personId)),
+    ])..where(db.transactions.personId.equals(personId) & db.transactions.deletedAt.isNull())
+      ..orderBy([drift.OrderingTerm.desc(db.transactions.transactionDate)]);
 
     return StreamBuilder<Person?>(
       stream: personStream,
@@ -35,26 +38,17 @@ class PersonDetailsScreen extends ConsumerWidget {
 
         return Scaffold(
           appBar: AppBar(title: Text(person.name)),
-          body: StreamBuilder(
+          body: StreamBuilder<List<drift.TypedResult>>(
             stream: transactionsStream.watch(),
             builder: (context, txSnapshot) {
               final rows = txSnapshot.data ?? [];
               
-              // Calculate balances per currency
-              final Map<String, double> incomePerCurrency = {};
-              final Map<String, double> expensePerCurrency = {};
-              
+              // Group rows by currency
+              final Map<String, List<drift.TypedResult>> groupedByCurrency = {};
               for (var row in rows) {
-                final tx = row.readTable(db.transactions);
                 final curr = row.readTable(db.currencies);
-                if (tx.type == 'income') {
-                  incomePerCurrency[curr.code] = (incomePerCurrency[curr.code] ?? 0) + tx.amount;
-                } else {
-                  expensePerCurrency[curr.code] = (expensePerCurrency[curr.code] ?? 0) + tx.amount;
-                }
+                groupedByCurrency.putIfAbsent(curr.code, () => []).add(row);
               }
-
-              final currencies = {...incomePerCurrency.keys, ...expensePerCurrency.keys}.toList();
 
               return CustomScrollView(
                 slivers: [
@@ -68,12 +62,22 @@ class PersonDetailsScreen extends ConsumerWidget {
                           const SizedBox(height: 24),
                           Text('كشف حساب إجمالي', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                           const SizedBox(height: 12),
-                          ...currencies.map((code) => _buildCurrencyBalanceCard(
-                            code, 
-                            incomePerCurrency[code] ?? 0, 
-                            expensePerCurrency[code] ?? 0,
-                            l10n,
-                          )),
+                          ...groupedByCurrency.entries.map((entry) {
+                            double income = 0;
+                            double expense = 0;
+                            for (var row in entry.value) {
+                              final tx = row.readTable(db.transactions);
+                              if (tx.type == 'income') income += tx.amount;
+                              else expense += tx.amount;
+                            }
+                            return _buildCurrencyBalanceCard(
+                              entry.key, 
+                              income, 
+                              expense,
+                              l10n,
+                              () => _exportPersonStatement(person.name, entry.key, entry.value, db),
+                            );
+                          }),
                         ],
                       ),
                     ),
@@ -104,6 +108,41 @@ class PersonDetailsScreen extends ConsumerWidget {
     );
   }
 
+  void _exportPersonStatement(String personName, String currencyCode, List<drift.TypedResult> rows, AppDatabase db) async {
+    final List<Map<String, dynamic>> data = [];
+    double income = 0;
+    double expense = 0;
+
+    for (var row in rows) {
+      final tx = row.readTable(db.transactions);
+      final proj = row.readTableOrNull(db.projects);
+      final cat = row.readTableOrNull(db.categories);
+
+      if (tx.type == 'income') income += tx.amount;
+      else expense += tx.amount;
+
+      data.add({
+        'date': DateFormat('yyyy-MM-dd').format(tx.transactionDate),
+        'type': tx.type == 'income' ? 'قبض' : 'صرف',
+        'project': proj?.name ?? '-',
+        'category': cat?.name ?? '-',
+        'reason': tx.reason,
+        'person': personName,
+        'amount': '${NumberFormat.decimalPattern().format(tx.amount)} $currencyCode',
+        'notes': tx.notes ?? '-',
+      });
+    }
+
+    await PdfService.generateFullReport(
+      companyName: 'كشف حساب: $personName',
+      period: 'كافة العمليات',
+      currency: currencyCode,
+      totalIncome: income,
+      totalExpense: expense,
+      transactionsData: data,
+    );
+  }
+
   Widget _buildPersonCard(Person person) {
     return Card(
       child: ListTile(
@@ -114,7 +153,7 @@ class PersonDetailsScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildCurrencyBalanceCard(String code, double income, double expense, AppLocalizations l10n) {
+  Widget _buildCurrencyBalanceCard(String code, double income, double expense, AppLocalizations l10n, VoidCallback onExport) {
     final net = income - expense;
     final format = NumberFormat.decimalPattern();
     return Card(
@@ -124,8 +163,18 @@ class PersonDetailsScreen extends ConsumerWidget {
         child: Column(
           children: [
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text(code, style: const TextStyle(fontWeight: FontWeight.bold)),
-              Text('الصافي: ${format.format(net)}', style: TextStyle(color: net >= 0 ? Colors.green : Colors.red, fontWeight: FontWeight.bold)),
+              Text(code, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.primaryBlue)),
+              Row(
+                children: [
+                  Text('الصافي: ${format.format(net)}', style: TextStyle(color: net >= 0 ? Colors.green : Colors.red, fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.picture_as_pdf, color: AppTheme.primaryBlue),
+                    onPressed: onExport,
+                    tooltip: 'تصدير كشف حساب',
+                  ),
+                ],
+              ),
             ]),
             const Divider(),
             Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
@@ -160,5 +209,3 @@ class PersonDetailsScreen extends ConsumerWidget {
     );
   }
 }
-
-

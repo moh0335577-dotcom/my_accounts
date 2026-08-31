@@ -11,6 +11,7 @@ import 'package:my_accounts/features/transactions/data/transaction_repository.da
 import 'package:my_accounts/core/theme/app_theme.dart';
 import 'package:my_accounts/core/utils/file_service.dart';
 import 'package:path/path.dart' as p;
+import 'package:image_picker/image_picker.dart';
 
 class AddTransactionScreen extends ConsumerStatefulWidget {
   final int? transactionId;
@@ -319,12 +320,55 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
   }
 
   Future<void> _pickAttachment() async {
-    final file = await FileService.pickFile();
-    if (file != null) {
-      setState(() {
-        _newAttachments.add(file);
-      });
-    }
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: AppTheme.primaryBlue),
+              title: const Text('تصوير بالكاميرا'),
+              onTap: () async {
+                Navigator.pop(context);
+                final file = await FileService.pickImage(ImageSource.camera);
+                if (file != null) {
+                  setState(() {
+                    _newAttachments.add(file);
+                  });
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: AppTheme.primaryBlue),
+              title: const Text('اختيار من المعرض'),
+              onTap: () async {
+                Navigator.pop(context);
+                final file = await FileService.pickImage(ImageSource.gallery);
+                if (file != null) {
+                  setState(() {
+                    _newAttachments.add(file);
+                  });
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file, color: AppTheme.primaryBlue),
+              title: const Text('اختيار ملف / مستند'),
+              onTap: () async {
+                Navigator.pop(context);
+                final file = await FileService.pickFile();
+                if (file != null) {
+                  setState(() {
+                    _newAttachments.add(file);
+                  });
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _removeExistingAttachment(Attachment a) async {
@@ -381,5 +425,3 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
     }
   }
 }
-
-

@@ -33,92 +33,113 @@ class _TransactionFilterSheetState extends ConsumerState<TransactionFilterSheet>
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(l10n.filter, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              TextButton(
-                onPressed: () {
-                  setState(() => _tempFilter = TransactionsFilter());
-                },
-                child: const Text('إعادة تعيين'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          
-          // Project Filter
-          FutureBuilder<List<Project>>(
-            future: db.select(db.projects).get(),
-            builder: (context, snapshot) {
-              final projects = snapshot.data ?? [];
-              return DropdownButtonFormField<int?>(
-                value: _tempFilter.projectId,
-                decoration: InputDecoration(labelText: l10n.project, border: const OutlineInputBorder()),
-                items: [
-                  const DropdownMenuItem(value: null, child: Text('الكل')),
-                  ...projects.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))),
-                ],
-                onChanged: (val) => setState(() => _tempFilter = _tempFilter.copyWith(projectId: val, clearProjectId: val == null)),
-              );
-            },
-          ),
-          const SizedBox(height: 16),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(l10n.filter, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                TextButton(
+                  onPressed: () {
+                    setState(() => _tempFilter = TransactionsFilter());
+                  },
+                  child: const Text('إعادة تعيين'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            
+            // Project Filter
+            FutureBuilder<List<Project>>(
+              future: db.select(db.projects).get(),
+              builder: (context, snapshot) {
+                final projects = snapshot.data ?? [];
+                return DropdownButtonFormField<int?>(
+                  value: _tempFilter.projectId,
+                  decoration: InputDecoration(labelText: l10n.project, border: const OutlineInputBorder()),
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('جميع المشاريع')),
+                    ...projects.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))),
+                  ],
+                  onChanged: (val) => setState(() => _tempFilter = _tempFilter.copyWith(projectId: val, clearProjectId: val == null)),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
 
-          // Type Filter
-          SegmentedButton<String?>(
-            segments: const [
-              ButtonSegment(value: null, label: Text('الكل')),
-              ButtonSegment(value: 'income', label: Text('قبض')),
-              ButtonSegment(value: 'expense', label: Text('دفع')),
-            ],
-            selected: {_tempFilter.type},
-            onSelectionChanged: (val) => setState(() => _tempFilter = _tempFilter.copyWith(type: val.first, clearType: val.first == null)),
-          ),
-          const SizedBox(height: 16),
+            // Person Filter
+            FutureBuilder<List<Person>>(
+              future: db.select(db.people).get(),
+              builder: (context, snapshot) {
+                final people = snapshot.data ?? [];
+                return DropdownButtonFormField<int?>(
+                  value: _tempFilter.personId,
+                  decoration: const InputDecoration(labelText: 'الشخص / الجهة', border: OutlineInputBorder()),
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('جميع الأشخاص')),
+                    ...people.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))),
+                  ],
+                  onChanged: (val) => setState(() => _tempFilter = _tempFilter.copyWith(personId: val, clearPersonId: val == null)),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
 
-          // Date Filter
-          ListTile(
-            title: const Text('الفترة الزمنية'),
-            subtitle: Text(_tempFilter.startDate == null 
-                ? 'الكل' 
-                : '${DateFormat('yyyy-MM-dd').format(_tempFilter.startDate!)} - ${DateFormat('yyyy-MM-dd').format(_tempFilter.endDate!)}'),
-            trailing: const Icon(Icons.date_range),
-            onTap: () async {
-              final picked = await showDateRangePicker(
-                context: context,
-                firstDate: DateTime(2020),
-                lastDate: DateTime(2100),
-                initialDateRange: _tempFilter.startDate != null 
-                    ? DateTimeRange(start: _tempFilter.startDate!, end: _tempFilter.endDate!) 
-                    : null,
-              );
-              if (picked != null) {
-                setState(() => _tempFilter = _tempFilter.copyWith(
-                  startDate: picked.start,
-                  endDate: picked.end,
-                ));
-              }
-            },
-          ),
-          const SizedBox(height: 24),
+            // Type Filter
+            const Text('نوع العملية', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            SegmentedButton<String?>(
+              segments: const [
+                ButtonSegment(value: null, label: Text('الكل')),
+                ButtonSegment(value: 'income', label: Text('قبض')),
+                ButtonSegment(value: 'expense', label: Text('دفع')),
+              ],
+              selected: {_tempFilter.type},
+              onSelectionChanged: (val) => setState(() => _tempFilter = _tempFilter.copyWith(type: val.first, clearType: val.first == null)),
+            ),
+            const SizedBox(height: 16),
 
-          ElevatedButton(
-            onPressed: () {
-              ref.read(transactionsFilterProvider.notifier).state = _tempFilter;
-              Navigator.pop(context);
-            },
-            style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-            child: const Text('تطبيق الفلتر'),
-          ),
-        ],
+            // Date Filter
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('الفترة الزمنية', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(_tempFilter.startDate == null 
+                  ? 'الكل' 
+                  : '${DateFormat('yyyy-MM-dd').format(_tempFilter.startDate!)} - ${DateFormat('yyyy-MM-dd').format(_tempFilter.endDate!)}'),
+              trailing: const Icon(Icons.date_range),
+              onTap: () async {
+                final picked = await showDateRangePicker(
+                  context: context,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2100),
+                  initialDateRange: _tempFilter.startDate != null 
+                      ? DateTimeRange(start: _tempFilter.startDate!, end: _tempFilter.endDate!) 
+                      : null,
+                );
+                if (picked != null) {
+                  setState(() => _tempFilter = _tempFilter.copyWith(
+                    startDate: picked.start,
+                    endDate: picked.end,
+                  ));
+                }
+              },
+            ),
+            const SizedBox(height: 24),
+
+            ElevatedButton(
+              onPressed: () {
+                ref.read(transactionsFilterProvider.notifier).state = _tempFilter;
+                Navigator.pop(context);
+              },
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+              child: const Text('تطبيق الفلتر'),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
-
-

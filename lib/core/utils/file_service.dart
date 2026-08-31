@@ -2,8 +2,11 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 
 class FileService {
+  static final _imagePicker = ImagePicker();
+
   static Future<File?> pickFile() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.any,
@@ -12,6 +15,18 @@ class FileService {
 
     if (result != null) {
       return File(result.files.single.path!);
+    }
+    return null;
+  }
+
+  static Future<File?> pickImage(ImageSource source) async {
+    final XFile? image = await _imagePicker.pickImage(
+      source: source,
+      imageQuality: 80, // Optimize image size
+    );
+
+    if (image != null) {
+      return File(image.path);
     }
     return null;
   }
@@ -37,5 +52,3 @@ class FileService {
     }
   }
 }
-
-

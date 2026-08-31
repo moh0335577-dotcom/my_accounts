@@ -36,6 +36,19 @@ class PeopleScreen extends ConsumerWidget {
                   leading: const CircleAvatar(child: Icon(Icons.person)),
                   title: Text(person.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Text(person.phone ?? 'بدون رقم هاتف'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit, color: Colors.blue),
+                        onPressed: () => _showEditPersonDialog(context, ref, person),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        onPressed: () => _confirmDeletePerson(context, ref, person),
+                      ),
+                    ],
+                  ),
                   onTap: () {
                     // Navigate to person details/transactions
                   },
@@ -87,6 +100,62 @@ class PeopleScreen extends ConsumerWidget {
       ),
     );
   }
+
+  void _showEditPersonDialog(BuildContext context, WidgetRef ref, Person person) {
+    final nameController = TextEditingController(text: person.name);
+    final phoneController = TextEditingController(text: person.phone);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تعديل البيانات'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: nameController, decoration: const InputDecoration(labelText: 'الاسم')),
+            TextField(controller: phoneController, decoration: const InputDecoration(labelText: 'رقم الهاتف'), keyboardType: TextInputType.phone),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              if (nameController.text.isNotEmpty) {
+                await ref.read(peopleRepositoryProvider).updatePerson(
+                  PeopleCompanion(
+                    id: drift.Value(person.id),
+                    name: drift.Value(nameController.text),
+                    phone: drift.Value(phoneController.text),
+                  ),
+                );
+                if (context.mounted) Navigator.pop(context);
+              }
+            },
+            child: const Text('تعديل'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeletePerson(BuildContext context, WidgetRef ref, Person person) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: Text('هل أنت متأكد من حذف "${person.name}"؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () async {
+              await ref.read(peopleRepositoryProvider).deletePerson(person.id);
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+  }
 }
-
-

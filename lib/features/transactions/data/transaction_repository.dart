@@ -11,6 +11,8 @@ class TransactionRepository {
   Stream<List<TypedResult>> watchAllTransactions({
     bool includeDeleted = false,
     int? projectId,
+    int? personId,
+    int? categoryId,
     DateTime? startDate,
     DateTime? endDate,
     String? searchQuery,
@@ -32,6 +34,14 @@ class TransactionRepository {
 
     if (projectId != null) {
       query.where(_db.transactions.projectId.equals(projectId));
+    }
+
+    if (personId != null) {
+      query.where(_db.transactions.personId.equals(personId));
+    }
+
+    if (categoryId != null) {
+      query.where(_db.transactions.categoryId.equals(categoryId));
     }
 
     if (type != null) {
@@ -83,7 +93,13 @@ class TransactionRepository {
     return (_db.delete(_db.transactions)..where((t) => t.id.equals(id))).go();
   }
 
-  Stream<List<TransactionSummary>> getBalancePerCurrency({int? projectId, DateTime? startDate, DateTime? endDate}) {
+  Stream<List<TransactionSummary>> getBalancePerCurrency({
+    int? projectId,
+    int? personId,
+    int? categoryId,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) {
     final amount = _db.transactions.amount.sum();
     final query = _db.select(_db.transactions).join([
       innerJoin(_db.currencies, _db.currencies.id.equalsExp(_db.transactions.currencyId)),
@@ -92,6 +108,12 @@ class TransactionRepository {
 
     if (projectId != null) {
       query.where(_db.transactions.projectId.equals(projectId));
+    }
+    if (personId != null) {
+      query.where(_db.transactions.personId.equals(personId));
+    }
+    if (categoryId != null) {
+      query.where(_db.transactions.categoryId.equals(categoryId));
     }
     if (startDate != null && endDate != null) {
       query.where(_db.transactions.transactionDate.isBetweenValues(startDate, endDate));
@@ -131,5 +153,3 @@ class TransactionSummary {
 final transactionRepositoryProvider = Provider<TransactionRepository>((ref) {
   return TransactionRepository(ref.watch(databaseProvider));
 });
-
-

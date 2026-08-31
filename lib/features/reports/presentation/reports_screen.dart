@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:my_accounts/core/localization/l10n/app_localizations.dart';
 import 'package:my_accounts/features/transactions/data/transaction_repository.dart';
+import 'package:my_accounts/features/people/data/people_repository.dart';
 import 'package:intl/intl.dart';
 import 'package:my_accounts/core/theme/app_theme.dart';
 import 'package:my_accounts/core/utils/pdf_service.dart';
@@ -18,17 +19,21 @@ class ReportsScreen extends ConsumerStatefulWidget {
 
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   DateTimeRange? _selectedDateRange;
+  int? _selectedPersonId;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final repository = ref.watch(transactionRepositoryProvider);
+    final peopleStream = ref.watch(peopleRepositoryProvider).watchAllPeople();
     final db = ref.watch(databaseProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surfaceColor = isDark ? const Color(0xFF1A1A2E) : Colors.white;
 
-    // جلب كافة العمليات التفصيلية لضمان فصلها حسب العملة بدقة عند التصدير
     final transactionsStream = repository.watchAllTransactions(
       startDate: _selectedDateRange?.start,
       endDate: _selectedDateRange?.end,
+      personId: _selectedPersonId,
     );
 
     return Scaffold(
@@ -49,57 +54,92 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               }
             },
           ),
-          if (_selectedDateRange != null)
+          if (_selectedDateRange != null || _selectedPersonId != null)
             IconButton(
-              icon: const Icon(Icons.clear),
-              onPressed: () => setState(() => _selectedDateRange = null),
+              icon: const Icon(Icons.clear_all),
+              onPressed: () => setState(() {
+                _selectedDateRange = null;
+                _selectedPersonId = null;
+              }),
             ),
         ],
       ),
-      body: StreamBuilder<List<TypedResult>>(
-        stream: transactionsStream,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          
-          final allTransactions = snapshot.data ?? [];
-          if (allTransactions.isEmpty) {
-            return Center(child: Text(l10n.noTransactions));
-          }
-
-          // تجميع العمليات حسب العملة (Currency Code) لمنع الاختلاط في التقارير
-          final Map<String, List<TypedResult>> groupedByCurrency = {};
-          for (var row in allTransactions) {
-            final currency = row.readTable(db.currencies);
-            groupedByCurrency.putIfAbsent(currency.code, () => []).add(row);
-          }
-
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              if (_selectedDateRange != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: Center(
-                    child: Chip(
-                      label: Text(
-                        '${DateFormat('yyyy-MM-dd').format(_selectedDateRange!.start)} - ${DateFormat('yyyy-MM-dd').format(_selectedDateRange!.end)}',
+      body: Column(
+        children: [
+          // قائمة الفلترة - تم إصلاح "الشريط الأبيض"
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Theme(
+              data: Theme.of(context).copyWith(
+                canvasColor: isDark ? const Color(0xFF1E1E2C) : Colors.white,
+              ),
+              child: StreamBuilder<List<Person>>(
+                stream: peopleStream,
+                builder: (context, snapshot) {
+                  final people = snapshot.data ?? [];
+                  return DropdownButtonFormField<int?>(
+                    value: _selectedPersonId,
+                    dropdownColor: isDark ? const Color(0xFF1E1E2C) : Colors.white,
+                    style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 16),
+                    decoration: InputDecoration(
+                      labelText: 'فلترة حسب الشخص / الجهة',
+                      labelStyle: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[700]),
+                      filled: true,
+                      fillColor: isDark ? const Color(0xFF1E1E2C) : Colors.grey[100],
+                      prefixIcon: Icon(Icons.person_search, color: isDark ? Colors.blueAccent : AppTheme.primaryBlue),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(15),
+                        borderSide: BorderSide.none,
                       ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     ),
-                  ),
-                ),
-              // عرض بطاقة منفصلة لكل عملة مع زر تصدير خاص بها فقط
-              ...groupedByCurrency.entries.map((entry) => _buildCurrencyCard(
-                    context,
-                    entry.key,
-                    entry.value,
-                    l10n,
-                    db,
-                  )),
-            ],
-          );
-        },
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('جميع الأشخاص')),
+                      ...people.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))),
+                    ],
+                    onChanged: (val) => setState(() => _selectedPersonId = val),
+                  );
+                },
+              ),
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<List<TypedResult>>(
+              stream: transactionsStream,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                
+                final allTransactions = snapshot.data ?? [];
+                if (allTransactions.isEmpty) {
+                  return Center(child: Text(l10n.noTransactions));
+                }
+
+                final Map<String, List<TypedResult>> groupedByCurrency = {};
+                for (var row in allTransactions) {
+                  final currency = row.readTable(db.currencies);
+                  groupedByCurrency.putIfAbsent(currency.code, () => []).add(row);
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: groupedByCurrency.length,
+                  itemBuilder: (context, index) {
+                    final entry = groupedByCurrency.entries.elementAt(index);
+                    return _buildCurrencyCard(
+                      context,
+                      entry.key,
+                      entry.value,
+                      l10n,
+                      db,
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -114,93 +154,100 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     double totalIncome = 0;
     double totalExpense = 0;
     String symbol = '';
+    String? personName;
 
-    // معالجة وتصفية بيانات العملة المحددة فقط وتجهيزها للتصدير
-    final List<Map<String, dynamic>> transactionsData = [];
-    
     for (var row in transactions) {
       final tx = row.readTable(db.transactions);
       final curr = row.readTable(db.currencies);
-      final proj = row.readTableOrNull(db.projects);
-      final cat = row.readTableOrNull(db.categories);
       final person = row.readTableOrNull(db.people);
 
       symbol = curr.symbol;
-      if (tx.type == 'income') {
-        totalIncome += tx.amount;
-      } else if (tx.type == 'expense') {
-        totalExpense += tx.amount;
+      if (person != null && _selectedPersonId == person.id) {
+        personName = person.name;
       }
 
-      transactionsData.add({
-        'date': DateFormat('yyyy-MM-dd').format(tx.transactionDate),
-        'type': tx.type == 'income' ? 'قبض' : 'صرف',
-        'project': proj?.name ?? '-',
-        'category': cat?.name ?? '-',
-        'reason': tx.reason,
-        'person': person?.name ?? '-',
-        'amount': '${NumberFormat.decimalPattern().format(tx.amount)} $currencyCode',
-        'notes': tx.notes ?? '-',
-      });
+      if (tx.type == 'income') totalIncome += tx.amount;
+      else totalExpense += tx.amount;
     }
 
     final net = totalIncome - totalExpense;
     final numberFormat = NumberFormat.decimalPattern();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 20),
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.only(bottom: 24),
+      elevation: 10,
+      color: isDark ? const Color(0xFF1A1A2E) : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(25),
+        side: BorderSide(color: isDark ? Colors.white.withOpacity(0.05) : Colors.transparent),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(24),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(currencyCode,
-                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                Text(symbol,
-                    style: const TextStyle(fontSize: 22, color: Colors.blueGrey)),
+                Text(symbol, style: TextStyle(fontSize: 32, fontWeight: FontWeight.w200, color: isDark ? Colors.white24 : Colors.grey.shade300)),
+                Text(currencyCode, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.blueAccent)),
               ],
             ),
-            const Divider(),
-            _buildStatRow(l10n.income, numberFormat.format(totalIncome), AppTheme.incomeGreen),
-            _buildStatRow(l10n.expenses, numberFormat.format(totalExpense), AppTheme.expenseRed),
-            const Divider(),
+            const Divider(height: 40, thickness: 0.5),
+            _buildStatRow('المقبوضات', numberFormat.format(totalIncome), AppTheme.incomeGreen),
+            const SizedBox(height: 16),
+            _buildStatRow('المدفوعات', numberFormat.format(totalExpense), AppTheme.expenseRed),
+            const Divider(height: 40, thickness: 0.5),
             _buildStatRow(
-              l10n.netBalance,
+              'صافي الرصيد',
               numberFormat.format(net),
               net >= 0 ? AppTheme.incomeGreen : AppTheme.expenseRed,
               isBold: true,
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,
+              height: 56,
               child: ElevatedButton.icon(
                 onPressed: () async {
+                  final List<Map<String, dynamic>> data = transactions.map((row) {
+                    final tx = row.readTable(db.transactions);
+                    final curr = row.readTable(db.currencies);
+                    final proj = row.readTableOrNull(db.projects);
+                    final cat = row.readTableOrNull(db.categories);
+                    final person = row.readTableOrNull(db.people);
+                    return {
+                      'date': DateFormat('yyyy-MM-dd').format(tx.transactionDate),
+                      'type': tx.type == 'income' ? 'قبض' : 'صرف',
+                      'project': proj?.name ?? '-',
+                      'category': cat?.name ?? '-',
+                      'reason': tx.reason,
+                      'person': person?.name ?? '-',
+                      'amount': '${numberFormat.format(tx.amount)} ${curr.code}',
+                      'notes': tx.notes ?? '-',
+                    };
+                  }).toList();
+
                   final period = _selectedDateRange != null
                       ? '${DateFormat('yyyy-MM-dd').format(_selectedDateRange!.start)} - ${DateFormat('yyyy-MM-dd').format(_selectedDateRange!.end)}'
-                      : 'كل الفترات';
+                      : 'كافة العمليات التاريخية';
 
-                  // تصدير بيانات هذه العملة فقط بشكل مستقل
                   await PdfService.generateFullReport(
-                    companyName: 'حساباتي',
+                    companyName: personName != null ? 'كشف حساب: $personName' : 'كشف حساب مالي عام',
                     period: period,
                     currency: currencyCode,
                     totalIncome: totalIncome,
                     totalExpense: totalExpense,
-                    transactionsData: transactionsData,
+                    transactionsData: data,
                   );
                 },
-                icon: const Icon(Icons.picture_as_pdf),
-                label: Text('${l10n.exportPdf} ($currencyCode)'),
+                icon: const Icon(Icons.picture_as_pdf, size: 24),
+                label: Text('تصدير كشف حساب ($currencyCode)', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primaryBlue,
+                  backgroundColor: const Color(0xFF1A237E),
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  elevation: 5,
                 ),
               ),
             ),
@@ -211,20 +258,12 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   }
 
   Widget _buildStatRow(String label, String value, Color color, {bool isBold = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label,
-              style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
-          Text(value,
-              style: TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.bold, color: color)),
-        ],
-      ),
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(value, style: TextStyle(fontSize: isBold ? 26 : 22, fontWeight: FontWeight.bold, color: color)),
+        Text(label, style: TextStyle(fontSize: isBold ? 18 : 17, color: isBold ? Colors.white : Colors.grey.shade400, fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
+      ],
     );
   }
 }
